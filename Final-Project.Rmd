@@ -1,0 +1,426 @@
+---
+title: "Final Project"
+author: "Nina Sonneborn"
+date: "November 3, 2016"
+output: html_document
+---
+
+*The RPubs link to this report can be found* [here](http://rpubs.com/nsonneborn/fp)
+
+```{r, echo=FALSE, message=FALSE}
+library(tidyverse)
+library(lubridate)
+```
+
+
+```{r, echo=FALSE, message=FALSE, cache=TRUE}
+
+trump <- read_csv(file = "DonaldTrump_facebook_statuses1.csv") %>%
+  mutate(user = "Trump") %>%
+  filter(status_published >= ymd("2015-06-16")) %>%
+  filter(status_published <= ymd("2016-11-08"))
+                                                                                                     
+clinton <- read_csv(file = "hillaryclinton_facebook_statuses1.csv") %>% 
+  mutate(user = "Clinton") %>% 
+  filter(status_published >= ymd("2015-04-12")) %>%
+  filter(status_published <= ymd("2016-11-08"))
+
+
+facebook <- bind_rows(trump, clinton)
+
+
+```
+
+# Facebook Posts from Donald Trump and Hillary Clinton during their campaigns
+
+The presence of social media was bigger during this election cycle than ever before. With Facebook and twitter becoming news sources, outlets for the candidates to express their opinions, etc., it is clear that social media played a role. Since social media is a relatively new political factor, I wanted to look into it more. I scraped the public facebook status data from both candidates using this [python script](http://nocodewebscraping.com/facebook-scraper/). This data included number of reactions, number of each type of reaction, date of publication, number of shares, number of comments, and status type. It is from the date each of the candidates announced their candicacy until November 8, 2016. Trump announced candidacy June 16, 2015 and Clinton announced candidacy April 12, 2015.
+
+I looked into what made a post popular. To measure popularity, I looked at the number of reactions. Another measure could have looked at is the number of shares, but the two are generally pretty closely correlated, so I didn't think it mattered too much. Also, the top 25 posts by shares and top 25 posts by reactions are exactly the same.
+
+``` {r, echo=FALSE, warning=FALSE, message=FALSE}
+
+facebook %>%
+  ggplot(aes(x = num_reactions, y = num_shares)) +
+  geom_point() +
+  geom_smooth() +
+  scale_y_log10() +
+  scale_x_log10() +
+  labs(x = "log(num_reactions)", y = "log(num_shares)")
+
+```
+
+I investigated whether the following variables had any effect on the popularity of a post.
+### variables
+* The proportion of total reactions that is a certain type (like, love, wow, haha, sad, angry)
+* Status type (status, video, photo, link)
+* Time of publication
+* Trends in national polling averages
+* A key event for each candidate
+* Trump's posts including the words "Crooked Hillary" in the post
+
+In the end, most of the variables didn't show any significant correlation. This report will offer an analysis of each of these variables, as well some suggestions as to what variables might be better to look at.
+
+
+# Initial investigation and overview of the data
+
+Some basic summary facts about the facebook posts will be important to keep in mind during the rest of the analysis. 
+
+Below, we see that gets on average, Trump gets about 3.4 times more reactions per post than Clinton (21,668 compared to 74,354). This is depite the fact that Clinton had 25% more posts than Trump. Clinton's frequency of posting also accounts for the fact that her total reactions over the campaign period outweigh Trump's.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, include= FALSE}
+facebook %>%
+  group_by(user) %>%
+  summarise(avg_reactions_per_post = mean(num_reactions))
+```
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+facebook %>%
+  mutate(avg_reactions_per_post = mean(num_reactions)) %>%
+  ggplot(aes(x = user, y= avg_reactions_per_post)) +
+  geom_bar(stat="identity") +
+  labs(title = "Average number of reactions on Facebook Posts", y = "Average reactions per post", x = "")
+
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+total_posts <- facebook %>% 
+  group_by(user) %>% 
+  summarise("total_posts" = sum(n_distinct(status_id)))
+
+total_posts %>% knitr::kable(caption= "Total posts during campaign period")
+
+```
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+facebook %>%
+  ggplot(aes(x = user, y = sum(num_reactions))) +
+  geom_bar(stat="identity") +
+  labs(title = "Total Facebook reactions during campaign", x = "", y = "Reactions")
+```
+
+
+The graph below shows the number of reactions per post over time. The smoother lines show the average trends. Vertical lines showing many unpopular posts on the same day correspond to advertisements.
+On January 1, Trump posted the same advertisement to donate to his campaign 35 times
+On July 21, Trump shared a advertisement photo about the GOP Convention 14 times.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+facebook %>% 
+  ggplot(aes(x = status_published, y = num_reactions, col = user)) +
+  geom_point(alpha = .5) +
+  geom_smooth(alpha = 1) +
+  scale_y_log10() +
+  labs(x = "Date published", y = "Number of reactions", title = "Facebook posts by Clinton and Trump")
+
+
+```
+
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+jan1 <- facebook %>% 
+  filter(date(status_published) == ymd("2016-01-01"), user == "Trump",
+         hour(status_published)== 14)
+
+july21<- facebook %>% 
+  filter(date(status_published) == ymd("2016-07-21"), user == "Trump", 
+         hour(status_published) == 04)
+
+```
+
+
+# Effect of the type of reaction
+
+I analyzed whether or not the proportion of total reactions that was each type of reaction was associated with popularity of posts. Reactions options on Facebook were first made available Feb 24, 2016, so any posts from before that date have value "NA" for proportion of each reaction type.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+rxn_start <- ymd("2016-02-24")
+
+facebook <- facebook %>%
+  group_by(status_id) %>%
+  mutate(prop_like = ifelse(status_published >= rxn_start, num_likes/num_reactions, NA), 
+         prop_love = ifelse(status_published >= rxn_start, num_loves/num_reactions, NA), 
+         prop_wow = ifelse(status_published >= rxn_start, num_wows/num_reactions, NA),
+         prop_sad = ifelse(status_published >= rxn_start, num_sads/num_reactions, NA),
+         prop_haha = ifelse(status_published >= rxn_start, num_hahas/num_reactions, NA),
+         prop_angry = ifelse(status_published >= rxn_start, num_angrys/num_reactions, NA))
+```
+
+Below, you can see that for the top 25 posts vs. all posts, the proportion of the reactions that are "likes" decreases drastically and the proportion of reactions that are "angry" increases drastically. prop_love actually decreases. It seems that perhaps posts that illicit anger are more popular.
+
+``` {r, echo=FALSE, message=FALSE, warning=FALSE}
+facebook %>% group_by(user) %>% 
+  filter(status_published > ymd("2016-02-24")) %>% # when reactions became available
+  summarise(avg_p_like = mean(prop_like), avg_p_love = mean(prop_love), 
+            avg_p_wow = mean(prop_wow),
+            avg_p_haha = mean(prop_haha), avg_p_sad = mean(prop_sad), 
+            avg_p_angry = mean(prop_angry)) %>%
+  knitr::kable(digits = 4, caption = "Breakdown of reactions by type for all posts")
+
+
+top_posts_by_rxns <- facebook %>% group_by(user) %>% arrange(desc(num_reactions)) %>% top_n(25)
+
+top_posts_by_shares <- facebook %>% group_by(user) %>% arrange(desc(num_shares)) %>% top_n(25)
+
+top_posts_rxn_shares <- anti_join(top_posts_by_shares, top_posts_by_rxns) # none!
+# interesting to note that top posts by shares and top posts by reactions have no overlap.
+
+top_posts_by_rxns %>% group_by(user) %>% 
+  summarise(avg_p_like = mean(prop_like), avg_p_love = mean(prop_love), avg_p_wow = mean(prop_wow),
+            avg_p_haha = mean(prop_haha), avg_p_sad = mean(prop_sad), avg_p_angry = mean(prop_angry)) %>%
+  knitr::kable(digits = 4, caption = "Breakdown of reactions by type for top 25 posts of each user")
+```
+
+However, in the general trend, there is not much of a correlation. It appears that "prop_angry" is mostly just related to the date of publication (closer to the election/after the primaries there are more posts with high "prop_angry" ) 
+
+``` {r, echo=FALSE, warning=FALSE, message=FALSE}
+facebook %>%
+  filter(status_published >= ymd("2016-02-04")) %>%
+  ggplot(aes(x = num_reactions, y = prop_angry, col = user)) +
+  geom_point() +
+  scale_x_log10() +
+  facet_wrap(~user) +
+  geom_smooth(col = "blue") +
+  labs(x = "log(Number of reactions)", y = "Proportion of reactions that are angry", 
+       title = "Popularity of posts vs. proportion of reactions 'angry'")
+
+most_angry <- facebook %>% filter(prop_angry > .3) %>% group_by(user)
+
+
+```
+
+Just out of curiousity, I looked at what some of the most angering posts of the election were. Here they are!
+
+###Ouliers for Clinton:
+* Purple Heart
+* Trump endorses "some sort of punishment" for women who get abortions
+
+###Outliers for Trump 
+* "Hillary Clinton will increase Syrian refugees by 550% without a realistic screening process"
+* "Four brace Americans lost their lives in Benghazi and Hillary Clinton falsely said tonight that we did not lose one American life in Libya. SAD!"
+* "Animals representing Hillary Clinton and Dems in North Carolina just firebombed our office in Orange County because we are winning."
+* "Hours after being interviewed by the FBI, Hillary Clinton told MSNBC she broke no laws because she never sent or recieved confidential emails."
+
+
+## Other reaction types
+Next, I looked at the other reaction types. The plots for all except for "like" are set not to show in the report, but can be run in the Rmd file. I chose not to include them because they were not very interesting. However, with likes, there is a general (weak) trend that posts with more total reactions have less likes (thus more of variety of reaction type, as like is the default reaction type).
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+facebook %>%
+  filter(status_published >= ymd("2016-02-04")) %>%
+  ggplot(aes(x = num_reactions, y = prop_like, col = user)) +
+  geom_point() +
+  scale_x_log10() +
+  facet_wrap(~user) +
+  geom_smooth(col = "blue") +
+  labs(x = "log(Number of reactions)", y = "Proportion of reactions that are 'like'", 
+       title = "Popularity of posts vs. proportion of reactions 'like'")
+
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, include=FALSE }
+facebook %>%
+  filter(status_published >= ymd("2016-02-04")) %>%
+  ggplot(aes(x = num_reactions, y = prop_love, col = user)) +
+  geom_point() +
+  scale_x_log10() +
+  facet_wrap(~user) +
+  geom_smooth(col = "blue") +
+  labs(x = "log(Number of reactions)", y = "Proportion of reactions that are 'love'", 
+       title = "Popularity of posts vs. proportion of reactions 'love'")
+
+facebook %>%
+  filter(status_published >= ymd("2016-02-04")) %>%
+  ggplot(aes(x = num_reactions, y = prop_wow, col = user)) +
+  geom_point() +
+  scale_x_log10() +
+  facet_wrap(~user) +
+  geom_smooth(col = "blue") +
+  labs(x = "log(Number of reactions)", y = "Proportion of reactions that are 'wow'", 
+       title = "Popularity of posts vs. proportion of reactions 'wow'")
+
+
+facebook %>%
+  filter(status_published >= ymd("2016-02-04")) %>%
+  ggplot(aes(x = num_reactions, y = prop_haha, col = user)) +
+  geom_point() +
+  scale_x_log10() +
+  facet_wrap(~user) +
+  geom_smooth(col = "blue") +
+  labs(x = "log(Number of reactions)", y = "Proportion of reactions that are 'haha'", 
+       title = "Popularity of posts vs. proportion of reactions 'haha'")
+
+facebook %>%
+  filter(status_published >= ymd("2016-02-04")) %>%
+  ggplot(aes(x = num_reactions, y = prop_sad, col = user)) +
+  geom_point() +
+  scale_x_log10() +
+  facet_wrap(~user) +
+  geom_smooth(col = "blue") +
+  labs(x = "log(Number of reactions)", y = "Proportion of reactions that are 'sad'", 
+       title = "Popularity of posts vs. proportion of reactions 'sad'")
+
+
+```
+
+
+``` {r, echo = FALSE, message=FALSE, warning=FALSE, include=FALSE}
+
+quantile(facebook$prop_angry, na.rm = TRUE)
+
+sum(facebook$prop_angry >= .015, na.rm = TRUE)
+# Only 10.03% of posts have prop_angry > .015
+
+```
+
+
+
+# Investigating status type
+
+The following graphics show how the average number of reactions on a post differ between status types.
+
+``` {r, echo = FALSE, message=FALSE}
+
+status_type_avgs <- facebook %>%
+  group_by(user, status_type) %>% 
+  summarise( mean_rxns = mean(num_reactions), num_posts = n_distinct(status_id)) %>%
+  arrange(desc(mean_rxns))
+
+status_type_avgs %>%
+  ggplot(aes(x = reorder(status_type, mean_rxns), y = mean_rxns, fill = user)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  facet_wrap(~user, scales = "free_y") +
+  labs(title = "Reactions by type of post", x = "", y = "Average number of reactions")
+
+status_type_avgs %>% knitr::kable()
+
+
+```
+
+It is interesting to note that the most popular type of status is different for each candidate. Also that when looking at the table, we see that the more popular status types don't have the most posts. It doesn't appear that the campaign believes the type of status has enough of an effect for them to change their behavior.
+
+
+# Time of day posted
+
+The number of reactions on a post is mostly unaffected by the time of day it is published. However, there pattern is similar for both candidates. Posts in the latest hours of the night are most popular. However, it is hard to use these results because the time of publication depends on the location of the candidate who is posting. They travel often during the campaign.
+
+``` {r, echo=FALSE, message=FALSE}
+rxns_by_hr <- facebook %>%
+  # mutate(status_time = parse_time(paste(hour(facebook$status_published) , "" , minute(facebook$status_published), sep=""), format="%R")
+  group_by(hour(status_published), user) %>%
+  summarise(avg_rxns = mean(num_reactions)) 
+rxns_by_hr %>%
+  ggplot(aes(x = `hour(status_published)`, y = avg_rxns, col = user)) +
+  geom_point() +
+  geom_smooth() +
+  labs(title = "Reactions by hour of the day", x = "Hour published (00-24)", y = "Average number of reactions")
+
+
+```
+
+
+
+# Polls
+I compared the trends in reactions to the trens in the national polling percentages (I pulled from every 5th day on [USA Today](http://www.usatoday.com/pages/interactives/2016/election/poll-tracker/) ).
+Looking at the polling precentage trends next to the facebook reaction trends, it is clear that there isn't much of a correlation between change in polling percentage and number of reactions.
+
+``` {r, echo = FALSE, message=FALSE}
+polls <- read_csv('polling_avgs.csv') %>% mutate(date = parse_datetime(date, format = "%m/%d/%y"))
+
+ggplot(polls, aes(x = date, y = poll_percent, col = candidate)) +
+  geom_point() +
+  geom_smooth() +
+  labs(title = "Polling percentages from July 1 to November 7", x = "", y = "Percent of vote in polls")
+
+facebook %>% 
+  ggplot(aes(x = status_published, y = num_reactions, col = user)) +
+  geom_point(alpha = .5) +
+  geom_smooth(alpha = 1) +
+  scale_y_log10() +
+  coord_cartesian(xlim = c(as.POSIXct(ymd("2016-07-01")), as.POSIXct(ymd("2016-11-07")))) + #clipped dates
+  labs(x = "Date published", y = "Number of reactions", title = "Facebook posts by Clinton and Trump")
+
+```
+
+
+# Key events
+
+I looked at one key event for each candidate to see if they had an effect on popularity of a post. 
+### The events were:
+* Clinton calls half of Trump's supporters in a "Basket of Deplorables": September 9, 2016
+* A video of Trump is released in which he says "grab her by the pussy": October 7, 2016
+
+In both cases, there was a slight increase in average number of reactions after their negative event, which is not what we would expect.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+facebook %>% #with clipping
+  ggplot(aes(x = status_published, y = num_reactions, col = user)) +
+  geom_point(alpha = .5) +
+  geom_smooth(alpha = 1) +
+  scale_y_log10() +
+  annotate("segment", x = as.POSIXct(ymd("2016-09-09")), 
+           xend = as.POSIXct(ymd("2016-09-09")), y = 0,
+           yend = 1000000, label = "Basket of deplorables", colour = "red") +
+  annotate("segment", x = as.POSIXct(ymd("2016-10-07")), 
+           xend = as.POSIXct(ymd("2016-10-07")), y = 0, 
+           yend = 1000000, label = "Grab her by the pussy", colour = "blue") +
+  xlim(c(as.POSIXct(ymd("2016-08-01")), as.POSIXct(ymd("2016-10-25")))) +
+  labs(x = "Date published", y = "Number of reactions", title = "Effect of key events")
+
+```
+
+
+# "Crooked Hillary"
+
+183 of Trump's posts included the words "Crooked Hillary." Does his mention of his opponent affect the popularity of a post?
+
+``` {r, echo = FALSE, message=FALSE, warning = FALSE, cache=TRUE, include=FALSE}
+crooked_hillary <- grepl("Crooked Hillary", facebook$status_message, fixed = TRUE)
+facebook <- bind_cols(facebook, as.data.frame(crooked_hillary))
+
+sum(facebook$crooked_hillary == 1)
+
+facebook %>% 
+  filter(user == "Trump") %>% 
+  group_by(crooked_hillary) %>%
+  summarise(avg_reactions = mean(num_reactions))
+
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+facebook %>% 
+  group_by(crooked_hillary) %>%
+  filter(status_published > ymd("2016-02-24"), user=="Trump") %>% 
+  summarise(avg_p_like = mean(prop_like), avg_p_love = mean(prop_love), 
+            avg_p_wow = mean(prop_wow),
+            avg_p_haha = mean(prop_haha), avg_p_sad = mean(prop_sad), 
+            avg_p_angry = mean(prop_angry)) %>%
+  knitr::kable(digits = 4, caption = "Breakdown of reactions by type for posts that include 'Crooked Hillary'")
+  
+```
+
+Well, posts about "Crooked Hillary" definitely make Trump's followers angrier! But do they draw more attention? Not really...
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+facebook %>%
+  filter(user == "Trump") %>%
+  ggplot(aes(x = crooked_hillary, y = num_reactions)) +
+  geom_boxplot() +
+  labs(x = "Post contains 'Crooked Hillary' ", y = "number of reactions")
+
+
+```
+
+
+
+# Conclusion
+
+With so much variation and no strong associations in this dataset, I would conclude that there isn't as much to be learned from Facebook data (that is accessible to the public) as I thought there would be. It is hard to interpret what the goal of a post is. It may be to have as many people see it as possible, or perhaps to have a certain impact on those who do see it. If we don't know what the goal of a post is, there isn't much use in analyzing its popularity. Additionally, reactions and shares don't tell us everything about how many people saw the post. Not everyone who sees a post clicks like, comment or share. If I wanted to analyze the factors that influence the popularity of a post, I would want data on how many times a post is viewed as well as data on the demographics of the users who viewed it. This is important because most posts are targetted towards a specific demographic.
+
+
+
+
