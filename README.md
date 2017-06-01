@@ -10,7 +10,7 @@ Abstract: I investigated whether the following variables had any effect on the p
 * Time of publication 
 * Trends in national polling averages 
 * A key event for each candidate 
-* Trump’s posts including the words “Crooked Hillary” in the post
+* Trump’s posts including the words “Crooked Hillary” in the post    
 In the end, most of the variables didn’t show any significant correlation. This report will offer an analysis of each of these variables, as well some suggestions as to what variables might be better to look at.
 
 ![](README_files/figure-markdown_github/reactions_time_series.png)
